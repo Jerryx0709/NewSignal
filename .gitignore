@@ -1,0 +1,6 @@
+
+# Ignore files
+sourcemap.json
+selene.toml
+.vscode
+Utils
