@@ -66,11 +66,47 @@ export type Signal<T... = ()> = {
 
 
 -- Classes
-local Connection = {}
-Connection.__index = Connection
 
+--[=[
+@class Signal
+
+A Signal is a class that is used to substitute the use of Bindable Events, this implementation
+tries to handle most of the edge cases that could happen, while being as performant as possible,
+with additional features for Advanced users such as selectable disconnect mode.
+
+This implementation tries to have similar API to the standard signal module, [GoodSignal](https://devforum.roblox.com/t/lua-signal-class-comparison-optimal-goodsignal-class/1387063),
+with some additional features.
+
+Quick example:
+```lua
+local NewSignal = require(path.to.NewSignal)
+
+-- Create a signal
+local Signal = NewSignal.new()
+
+-- Connect a listener
+local Connection = Signal:Connect(function(Param)
+    print(`The Signal Got fired, param: {Param}`)
+end)
+
+-- Fire the signal
+Signal:Fire("Hello")
+
+-- Disconnect the listener
+Connection:Disconnect()
+```
+]=]
 local Signal = {}
 Signal.__index = Signal
+
+--[=[
+@class Connection
+
+A Connection is a Class used to manage the connection between a listener and a signal, 
+it is returned when connecting to a signal, and can be used to disconnect the listener from the signal.
+]=]
+local Connection = {}
+Connection.__index = Connection
 
 -- Thread reusing protocol
 local ThreadPool = {} :: {thread}
@@ -95,7 +131,7 @@ local function GetThread(): thread
 	return RunnerThread
 end
 
--- Helper Functions
+-- Private Functions
 
 local function QueueMutation<T...>(ConnectionObj: Connection<T...>?, Kind: number, SignalObj: Signal<T...>): ()
 	local Queue : {any} = SignalObj[4]
@@ -307,7 +343,6 @@ local function ProtectedInvoke(Callback: (...any) -> (), ...: any): ()
 	end
 end
 
-
 local function StartFiring<T...>(SignalObj: Signal<T...>): ()
 	if SignalObj[3] then 
 		AddReentrantFire(SignalObj)
@@ -321,8 +356,22 @@ local function EndFiring<T...>(SignalObj: Signal<T...>): ()
 	ResumeReentrant(SignalObj)
 end
 
+
+-- Public API
+
 -- Connection Class
 
+--[=[
+Disconnects a connection from a Signal, any future `:Fire` calls 
+will not invoke this connection's listener.
+
+@within Connection
+@param Immediate boolean?
+```lua 
+local Connection = Signal:Connect(function(Args) end)
+Connection:Disconnect(true) -- Disconnects the connection immediately (Can cause issues if not done carefully)
+```
+]=]
 function Connection:Disconnect<T...>(Immediate: boolean?): ()
 	if not self[1] then return end
 	local SignalObj: Signal<T...> = self[2]
@@ -350,14 +399,49 @@ end
 
 -- Signal Class
 
+--[=[
+Creates a new Signal object
+
+@return Signal
+```lua
+local Signal = NewSignal.new()
+```
+]=]
 function Signal.new<T...>(): Signal<T...>
 	return setmetatable({}, Signal) :: Signal<T...>
 end
 
+--[=[
+Connects a function to the signal, which will be called everytime the signal is fired.
+
+@param Callback (...) -> ()
+@return Connection
+```lua
+Signal:Connect(function(Message, Number)
+	print(Message, Number)
+end)
+
+Signal:Fire("Hello", 25)
+```
+]=]
 function Signal:Connect<T...>(Callback: (T...) -> ()): Connection<T...>
 	return CreateConnection(self, Callback)
 end
 
+--[=[
+Connects a function to the signal, which will be called once and disconnected immediatly.
+
+@param Callback (...) -> ()
+@return Connection
+```lua
+Signal:Once(function(Message, Number)
+	print(Message, Number)
+end)
+
+Signal:Fire("Hello", 25)
+Signal:Fire("This message will not get printed", 10)
+```
+]=]
 function Signal:Once<T...>(Callback: (T...) -> ()): Connection<T...>
 	local ConnectionObj: Connection<T...>
 	ConnectionObj = CreateConnection(self, function(...)
@@ -368,6 +452,18 @@ function Signal:Once<T...>(Callback: (T...) -> ()): Connection<T...>
 	return ConnectionObj
 end
 
+--[=[
+Yields the current thread until `:Fire` occurs, and returns the arguments fired from the signal.
+
+@return ... any
+@yields
+```lua
+task.spawn(function()
+	print(Signal:Wait()) --> "Test", 89, nil, false
+end)
+Signal:Fire("Test", 89, nil, false)
+```
+]=]
 function Signal:Wait<T...>(): T...
 	local YieldedThreads: {[thread]: boolean} = self[8]
 	if not YieldedThreads then
@@ -402,6 +498,18 @@ function Signal:Wait<T...>(): T...
 	return coroutine.yield()
 end
 
+--[=[
+Fires a Signal object Asynchronously with the arguments passed.
+
+@param ... any
+```lua
+Signal:Connect(function(Text)
+	print(Text) --> "Something..."
+end)
+
+Signal:FireAsync("Something...")
+```
+]=]
 function Signal:FireAsync<T...>(...: T...): ()
 
 	StartFiring(self)
@@ -419,6 +527,18 @@ function Signal:FireAsync<T...>(...: T...): ()
 	EndFiring(self)
 end
 
+--[=[
+Fires a Signal object with the arguments passed using a `pcall`.
+
+@param ... any
+```lua
+Signal:Connect(function(Text)
+	print(Text) --> "Something..."
+end)
+
+Signal:FireSafe("Something...")
+```
+]=]
 function Signal:FireSafe<T...>(...: T...): ()
 
 	StartFiring(self)
@@ -436,6 +556,16 @@ function Signal:FireSafe<T...>(...: T...): ()
 	EndFiring(self)
 end
 
+--[=[
+Disconnects all current Connections from the Signal.
+
+@param Immediate boolean?
+```lua
+Signal:Connect(function(Args) end)
+
+Signal:DisconnectAll(true) -- All connections are disconnected immediately (It will not be Queued and will break the current iteration)
+```
+]=]
 function Signal:DisconnectAll<T...>(Immediate: boolean?): ()
 
 	if self[3] and not Immediate then
@@ -473,6 +603,15 @@ function Signal:DisconnectAll<T...>(Immediate: boolean?): ()
 	table.clear(YieldedThreads)
 end
 
+--[=[
+Destroys a Signal object, disconnecting all connections and making it unusable.
+
+```lua
+Signal:Connect(function(Args) end)
+
+Signal:Destroy() -- Destroys the signal and disconnects all connections
+```
+]=]
 function Signal:Destroy()
 	self:DisconnectAll(true)
 
@@ -491,7 +630,19 @@ function Signal:Destroy()
 	self[8] = nil
 end
 
--- Default Signal Fire Bevahiour
+--[=[
+Alias for FireAsync by default.
+
+@method Fire
+@within Signal
+```lua
+Signal:Connect(function(Text)
+	print(Text) --> "Something..."
+end)
+
+Signal:Fire("Something...") -- Same behaviour as `FireAsync`
+```
+]=]
 Signal.Fire = Signal.FireAsync
 
 return table.freeze({

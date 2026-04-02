@@ -4,12 +4,6 @@
 	<strong>A high-performance and reliable signal library for Roblox.</strong>
 </p>
 
-<p align="center">
-	<a href="LICENSE"><img alt="Static Badge" src="https://img.shields.io/badge/License-MIT-blue"></img></a>
-	<a href="#"><img alt="Static Badge" src="https://img.shields.io/badge/GitHub-repo-orange?logo=github"></img></a>
-	<a href="#"><img alt="Static Badge" src="https://img.shields.io/badge/GitHub%20Pages-Docs-8a2be2?logo=googledocs&logoColor=white"></img></a> 
-</p>
-
 NewSignal is a lightweight alternative to Roblox's `BindableEvent` with superior performance and error handling done all for you.
 
 ## Features
@@ -21,6 +15,10 @@ NewSignal is a lightweight alternative to Roblox's `BindableEvent` with superior
 - **Security** — Handles all possible edge cases while still being as performant as possible
 - **Familiar API** — Similar API to other Signal Modules and tries to simulate Roblox's `BindableEvent` API with additional features
 - **Two Disconnect Modes** — Extra features for Advanced Users
+
+## Documentation
+
+**See Documentation [here](https://Jerryx0709.github.io/NewSignal/api/Signal)**
 
 ## Installation
 
@@ -43,7 +41,7 @@ local Signal = NewSignal.new()
 
 -- Connect a listener
 local Connection = Signal:Connect(function(Param)
-    print(`The Signal Got fired, param: {Param}`)
+	print(`The Signal Got fired, param: {Param}`)
 end)
 
 -- Fire the signal
@@ -52,10 +50,6 @@ Signal:Fire("Hello")
 -- Disconnect the listener
 Connection:Disconnect()
 ```
-
-## Documentation
-
-**See Documentation [here](https://Jerryx0709.github.io/NewSignal/api/Signal)**
 
 ## License
 
