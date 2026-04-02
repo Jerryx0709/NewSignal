@@ -53,9 +53,9 @@ Connection:Disconnect()
 
 ## License
 
-**MIT** — See [LICENSE](/LICENSE) for details.
+**MIT** — See [LICENSE](https://github.com/Jerryx0709/NewSignal/blob/main/LICENSE) for details.
 
 ## Links
 
 - **GitHub**: https://github.com/Jerryx0709/NewSignal
-- **Docs**: https://Jerryx0709.github.io/NewSignal/ (Coming soon)
+- **Docs**: https://Jerryx0709.github.io/NewSignal/

@@ -55,7 +55,7 @@ Connection:Disconnect()
 
 ## Documentation
 
-**See Documentation [here](https://Jerryx0709.github.io/NewSignal/api/Signal)**
+**See Documentation [here](https://Jerryx0709.github.io/NewSignal/)**
 
 ## License
 
@@ -64,4 +64,4 @@ Connection:Disconnect()
 ## Links
 
 - **GitHub**: https://github.com/Jerryx0709/NewSignal
-- **Docs**: https://Jerryx0709.github.io/NewSignal/ (Coming soon)
+- **Docs**: https://Jerryx0709.github.io/NewSignal/
