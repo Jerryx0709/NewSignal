@@ -1,0 +1,26 @@
+classOrder = [
+	"Signal",
+	"Connection"
+]
+
+gitSourceBranch = "main"
+
+[home]
+enabled = true
+includeReadme = false
+
+[[home.features]]
+title = "Security"
+description = "NewSignal handles all edge cases for you while still being as performant as possible. The edge case handling architecture makes it able to be always predictable."
+
+[[home.features]]
+title = "Double Disconnect mode"
+description = "NewSignal is though also for more advanced users which might want more control over their Signals, NewSignal offers two disconnect modes for you to choose, Standard and Immediate, giving you freedom of using whichever you want."
+
+[[home.features]]
+title = "Familiar API"
+description = "NewSignal is designed to have a Familiar API by mirroring BindableEvents, as well as other common signal modules such as GoodSignal, while also having additional features which add on top of the basic functionality."
+
+[docusaurus]
+title = "NewSignal"
+tagline = "Signal implementation for Roblox"
