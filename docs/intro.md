@@ -53,7 +53,7 @@ Connection:Disconnect()
 
 ## License
 
-**MIT** — See [LICENSE](LICENSE) for details.
+**MIT** — See [LICENSE](/LICENSE) for details.
 
 ## Links
 
