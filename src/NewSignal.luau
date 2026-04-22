@@ -17,12 +17,20 @@ This project is still work in progress and may still contain some bugs.
 
 ]]
 
+-- Version: 2.0.0
+
+--!strict
 --!optimize 2
 
--- Types
+-- Config
+
+type FireMethods = "FireSync" | "FireAsync" | "FireDeferred" | "FireSafe"
+
+local DefaultFireMethod: FireMethods = "FireAsync"
 
 export type Connection<T... = ()> = {
-	Disconnect: (self: Connection<T...>, Immediate: boolean?) -> (),
+	Disconnect: (self: Connection<T...>) -> (),
+	DisconnectImmediate: (self: Connection<T...>) -> (),
 
 	[number]: any, -- Internal slots:
 	--[[
@@ -41,10 +49,13 @@ export type Signal<T... = ()> = {
 	Connect: (self: Signal<T...>, Callback: (T...) -> ()) -> Connection<T...>,
 	Once: (self: Signal<T...>, Callback: (T...) -> ()) -> Connection<T...>,
 	Fire: (self: Signal<T...>, T...) -> (),
+	FireSync: (self: Signal<T...>, T...) -> (),
+	FireDeferred: (self: Signal<T...>, T...) -> (),
 	FireAsync: (self: Signal<T...>, T...) -> (),
 	FireSafe: (self: Signal<T...>, T...) -> (),
 	Wait: (self: Signal<T...>) -> T...,
-	DisconnectAll: (self: Signal<T...>, Immediate: boolean?) -> (),
+	DisconnectAll: (self: Signal<T...>) -> (),
+	DisconnectAllImmediate: (self: Signal<T...>) -> (),
 	Destroy: (self: Signal<T...>) -> (),
 
 	
@@ -89,7 +100,7 @@ local Connection = Signal:Connect(function(Param)
     print(`The Signal Got fired, param: {Param}`)
 end)
 
--- Fire the signal
+-- Fire the signal with the default method
 Signal:Fire("Hello")
 
 -- Disconnect the listener
@@ -366,13 +377,12 @@ Disconnects a connection from a Signal, any future `:Fire` calls
 will not invoke this connection's listener.
 
 @within Connection
-@param Immediate boolean?
 ```lua 
 local Connection = Signal:Connect(function(Args) end)
-Connection:Disconnect(true) -- Disconnects the connection immediately (Can cause issues if not done carefully)
+Connection:Disconnect()
 ```
 ]=]
-function Connection:Disconnect<T...>(Immediate: boolean?): ()
+function Connection:Disconnect<T...>(): ()
 	if not self[1] then return end
 	local SignalObj: Signal<T...> = self[2]
 
@@ -385,11 +395,34 @@ function Connection:Disconnect<T...>(Immediate: boolean?): ()
 			return
 		end
 
-		if not Immediate then
-			if self[6] == 2 then return end
-			
-			self[6] = 2
-			QueueMutation(self, 2, SignalObj)
+		if self[6] == 2 then return end
+		
+		self[6] = 2
+		QueueMutation(self, 2, SignalObj)
+	end
+end
+
+--[=[
+Disconnects a connection from a Signal immediately. 
+This can cause issues if not used carefully
+
+@within Connection
+@tag To be used Carefully
+```lua 
+local Connection = Signal:Connect(function(Args) end)
+Connection:DisconnectImmediate()
+```
+]=]
+function Connection:DisconnectImmediate<T...>(): ()
+	if not self[1] then return end
+	local SignalObj: Signal<T...> = self[2]
+
+	local PendingStatus: number? = self[6]
+
+	if SignalObj[3] then
+		if PendingStatus == 1 then
+			self[1] = false
+			self[6] = nil
 			return
 		end
 	end
@@ -499,6 +532,34 @@ function Signal:Wait<T...>(): T...
 end
 
 --[=[
+Fires a Signal object with the arguments passed.
+
+@param ... any
+```lua
+Signal:Connect(function(Text)
+	print(Text) --> "Something..."
+end)
+
+Signal:FireSync("Something...")
+```
+]=]
+function Signal:FireSync<T...>(...: T...): ()
+
+	StartFiring(self)
+
+	local CurrentConnection: Connection<T...> = self[1]
+
+	while CurrentConnection do
+		if CurrentConnection[1] then
+			CurrentConnection[3](...)
+		end
+		CurrentConnection = CurrentConnection[5]
+	end
+
+	EndFiring(self)
+end
+
+--[=[
 Fires a Signal object Asynchronously with the arguments passed.
 
 @param ... any
@@ -528,6 +589,35 @@ function Signal:FireAsync<T...>(...: T...): ()
 end
 
 --[=[
+Fires a Signal object with the arguments passed with a `task.defer`.
+Doesn't take use of the thread recicling protocol.
+
+@param ... any
+```lua
+Signal:Connect(function(Text)
+	print(Text) --> "Something..."
+end)
+
+Signal:FireDeferred("Something...")
+```
+]=]
+function Signal:FireDeferred<T...>(...: T...): ()
+
+	StartFiring(self)
+
+	local CurrentConnection: Connection<T...> = self[1]
+
+	while CurrentConnection do
+		if CurrentConnection[1] then
+			task.defer(CurrentConnection[3], ...)
+		end
+		CurrentConnection = CurrentConnection[5]
+	end
+
+	EndFiring(self)
+end
+
+--[=[
 Fires a Signal object with the arguments passed using a `pcall`.
 
 @param ... any
@@ -548,7 +638,7 @@ function Signal:FireSafe<T...>(...: T...): ()
 	while CurrentConnection do
 		if CurrentConnection[1] then
 			local RunnerThread = GetThread()
-			task.spawn(RunnerThread, RunnerThread, ProtectedInvoke,CurrentConnection[3], ...)
+			task.spawn(RunnerThread, RunnerThread, ProtectedInvoke, CurrentConnection[3], ...)
 		end
 		CurrentConnection = CurrentConnection[5]
 	end
@@ -559,16 +649,15 @@ end
 --[=[
 Disconnects all current Connections from the Signal.
 
-@param Immediate boolean?
 ```lua
 Signal:Connect(function(Args) end)
 
-Signal:DisconnectAll(true) -- All connections are disconnected immediately (It will not be Queued and will break the current iteration)
+Signal:DisconnectAll()
 ```
 ]=]
-function Signal:DisconnectAll<T...>(Immediate: boolean?): ()
+function Signal:DisconnectAll<T...>(): ()
 
-	if self[3] and not Immediate then
+	if self[3] then
 		QueueMutation(nil, 3, self)
 	else
 		DisconnectExisting(self)
@@ -604,6 +693,50 @@ function Signal:DisconnectAll<T...>(Immediate: boolean?): ()
 end
 
 --[=[
+Disconnects all current Connections from the Signal immediately.
+This can cause issues if not used carefully
+
+@tag To be used Carefully
+```lua
+Signal:Connect(function(Args) end)
+
+Signal:DisconnectAllImmediate()
+```
+]=]
+function Signal:DisconnectAllImmediate<T...>(): ()
+
+	DisconnectExisting(self)
+	
+	if self[3] then
+		local MutationQueue: {any}? = self[4]
+		if MutationQueue then
+			local QueueSize = #MutationQueue
+			local Index = 1
+			while Index <= QueueSize do
+				if MutationQueue[Index] == 1 then
+					local PendingConnection: Connection<T...> = MutationQueue[Index + 1]
+					PendingConnection[1] = false
+					PendingConnection[6] = nil
+				end
+				Index += 2
+			end
+		end
+	end
+
+	local YieldedThreads: {[thread]: boolean}? = self[8]
+	if not YieldedThreads then return end
+
+	for Thread in YieldedThreads do
+		if coroutine.status(Thread) == "suspended" then
+			warn(debug.traceback(Thread, "Signal Disconnected. Yielded thread cancelled", 2))
+			task.cancel(Thread)
+		end
+	end
+
+	table.clear(YieldedThreads)
+end
+
+--[=[
 Destroys a Signal object, disconnecting all connections and making it unusable.
 
 ```lua
@@ -612,8 +745,8 @@ Signal:Connect(function(Args) end)
 Signal:Destroy() -- Destroys the signal and disconnects all connections
 ```
 ]=]
-function Signal:Destroy()
-	self:DisconnectAll(true)
+function Signal:Destroy<T...>()
+	self:DisconnectAllImmediate()
 
 	local MutationQueue: {any}? = self[4]
 	if MutationQueue then
@@ -630,20 +763,22 @@ function Signal:Destroy()
 	self[8] = nil
 end
 
+
 --[=[
 Alias for FireAsync by default.
+Can be changed to any of the other fire methods by modiying the `DefaultFireMethod` variable.
 
-@method Fire
 @within Signal
+@method Fire
 ```lua
 Signal:Connect(function(Text)
 	print(Text) --> "Something..."
 end)
 
-Signal:Fire("Something...") -- Same behaviour as `FireAsync`
+Signal:Fire("Something...") -- Same behaviour as `FireAsync` by default
 ```
 ]=]
-Signal.Fire = Signal.FireAsync
+Signal.Fire = Signal[DefaultFireMethod]
 
 return table.freeze({
 	new = Signal.new,
