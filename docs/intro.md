@@ -28,9 +28,17 @@ NewSignal is a lightweight alternative to Roblox's `BindableEvent` with superior
 2. Place the `NewSignal` file in your game wherever you want
 3. Require it in your scripts
 
-### Wally or Roblox
+### Roblox
 
-These options aren't alvailable yet, but I'll put it on them as soon as possible
+I will add a package on the Roblox Marketplace soon.
+
+1. Download the latest release from github
+2. Place the script inside of your game
+3. Require it in your scripts
+
+### Wally
+
+I'll put it on it as soon as possible (I need to figure it out)
 
 ## Quick Start
 ```luau

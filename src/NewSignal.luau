@@ -17,10 +17,16 @@ This project is still work in progress and may still contain some bugs.
 
 ]]
 
+-- Version: 2.0.0
+
 --!strict
 --!optimize 2
 
--- Types
+-- Config
+
+type FireMethods = "FireSync" | "FireAsync" | "FireDeferred" | "FireSafe"
+
+local DefaultFireMethod: FireMethods = "FireAsync"
 
 export type Connection<T... = ()> = {
 	Disconnect: (self: Connection<T...>) -> (),
@@ -94,7 +100,7 @@ local Connection = Signal:Connect(function(Param)
     print(`The Signal Got fired, param: {Param}`)
 end)
 
--- Fire the signal
+-- Fire the signal with the default method
 Signal:Fire("Hello")
 
 -- Disconnect the listener
@@ -760,18 +766,19 @@ end
 
 --[=[
 Alias for FireAsync by default.
+Can be changed to any of the other fire methods by modiying the `DefaultFireMethod` variable.
 
-@method Fire
 @within Signal
+@method Fire
 ```lua
 Signal:Connect(function(Text)
 	print(Text) --> "Something..."
 end)
 
-Signal:Fire("Something...") -- Same behaviour as `FireAsync`
+Signal:Fire("Something...") -- Same behaviour as `FireAsync` by default
 ```
 ]=]
-Signal.Fire = Signal.FireAsync
+Signal.Fire = Signal[DefaultFireMethod]
 
 return table.freeze({
 	new = Signal.new,
