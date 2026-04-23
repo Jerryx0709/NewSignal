@@ -4,3 +4,4 @@ sourcemap.json
 selene.toml
 .vscode
 build
+/test

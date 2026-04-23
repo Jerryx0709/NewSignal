@@ -400,6 +400,8 @@ function Connection:Disconnect<T...>(): ()
 		self[6] = 2
 		QueueMutation(self, 2, SignalObj)
 	end
+
+	DisconnectConnection(self)
 end
 
 --[=[
