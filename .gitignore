@@ -5,3 +5,4 @@ selene.toml
 .vscode
 build
 /test
+.idea

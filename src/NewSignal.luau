@@ -24,13 +24,12 @@ This project is still work in progress and may still contain some bugs.
 
 -- Config
 
-type FireMethods = "FireSync" | "FireAsync" | "FireDeferred" | "FireSafe"
+type FireMethods = "FireAsync" | "FireDeferred" | "FireSafe"
 
 local DefaultFireMethod: FireMethods = "FireAsync"
 
 export type Connection<T... = ()> = {
 	Disconnect: (self: Connection<T...>) -> (),
-	DisconnectImmediate: (self: Connection<T...>) -> (),
 
 	[number]: any, -- Internal slots:
 	--[[
@@ -49,13 +48,11 @@ export type Signal<T... = ()> = {
 	Connect: (self: Signal<T...>, Callback: (T...) -> ()) -> Connection<T...>,
 	Once: (self: Signal<T...>, Callback: (T...) -> ()) -> Connection<T...>,
 	Fire: (self: Signal<T...>, T...) -> (),
-	FireSync: (self: Signal<T...>, T...) -> (),
 	FireDeferred: (self: Signal<T...>, T...) -> (),
 	FireAsync: (self: Signal<T...>, T...) -> (),
 	FireSafe: (self: Signal<T...>, T...) -> (),
 	Wait: (self: Signal<T...>) -> T...,
 	DisconnectAll: (self: Signal<T...>) -> (),
-	DisconnectAllImmediate: (self: Signal<T...>) -> (),
 	Destroy: (self: Signal<T...>) -> (),
 
 	
@@ -66,10 +63,11 @@ export type Signal<T... = ()> = {
 	[2]: Connection<T...>? -- Tail
 	[3]: boolean? -- Firing (nil if not finring, true if firing)
 	[4]: {Kind: number, Connection<T...>?}? -- Mutation Queue (Kind: 1 for Add, 2 for Remove, 3 for Disconnect All)
-	[5]: {thread}? -- Reentrants Queue
+	[5]: {thread}? -- Reentrants Queue (Will be changed to {FireKind: number, Args: {...: any}?}?)
 	[6]: number? -- Reentrant Head
 	[7]: number? -- Reentrant Tail
 	[8]: {[thread]: boolean}? -- Waiting Threads
+	[9]: {Connection<T...>}? -- Connection Cleanup Queue
 
 	]]
 }
@@ -119,12 +117,20 @@ it is returned when connecting to a signal, and can be used to disconnect the li
 local Connection = {}
 Connection.__index = Connection
 
+
 -- Thread reusing protocol
+
+local CachedThread: thread? = nil
 local ThreadPool = {} :: {thread}
 
 local function CallThread(Thread: thread, Callback: (...any) -> (), ...: any): ()
 	Callback(...)
-	ThreadPool[#ThreadPool + 1] = Thread
+
+	if CachedThread then
+		ThreadPool[#ThreadPool + 1] = Thread
+	else
+		CachedThread = Thread
+	end
 end
 
 local function YieldThread(): ()
@@ -134,17 +140,31 @@ local function YieldThread(): ()
 end
 
 local function GetThread(): thread
+	if CachedThread then
+		local RunnerThread = CachedThread
+		CachedThread = nil
+
+		if coroutine.status(RunnerThread) == "suspended" then
+			return RunnerThread
+		end
+	end
+
 	local Amount = #ThreadPool
 	if Amount == 0 then return task.spawn(YieldThread) end
 
 	local RunnerThread = ThreadPool[Amount]
 	ThreadPool[Amount] = nil
+
+	if coroutine.status(RunnerThread) ~= "suspended" then
+		return task.spawn(YieldThread)
+	end
+
 	return RunnerThread
 end
 
 -- Private Functions
 
-local function QueueMutation<T...>(ConnectionObj: Connection<T...>?, Kind: number, SignalObj: Signal<T...>): ()
+local function QueueMutation<T...>(ConnectionObj: Connection<T...>? | number, Kind: number, SignalObj: Signal<T...>): () -- number in ConnectionObj to allow DisconnectAll
 	local Queue : {any} = SignalObj[4]
 
 	if not Queue then
@@ -156,6 +176,31 @@ local function QueueMutation<T...>(ConnectionObj: Connection<T...>?, Kind: numbe
 	Queue[Tail + 1] = Kind
 	Queue[Tail + 2] = ConnectionObj
 end
+
+local function QueueDisconnectedCleanup<T...>(SignalObj: Signal<T...>, ConnectionObj: Connection<T...>): ()
+	local Queue: {Connection<T...>}? = SignalObj[9]
+
+	if not Queue then
+		Queue = {}
+		SignalObj[9] = Queue
+	end
+
+	local CleanupQueue = Queue :: {Connection<T...>}
+	CleanupQueue[#CleanupQueue + 1] = ConnectionObj
+end
+
+local function CleanupDisconnectedConnections<T...>(SignalObj: Signal<T...>): ()
+	local Queue: {Connection<T...>}? = SignalObj[9]
+	if not Queue then return end
+
+	for _, ConnectionObj in Queue do
+		ConnectionObj[4] = nil
+		ConnectionObj[5] = nil
+	end
+
+	table.clear(Queue)
+end
+
 
 local function DisconnectConnection<T...>(ConnectionObj: Connection<T...>): ()
 	if not ConnectionObj[1] then return end
@@ -179,6 +224,14 @@ local function DisconnectConnection<T...>(ConnectionObj: Connection<T...>): ()
 	else
 		SignalObj[1] = Next
 	end
+
+	if SignalObj[3] then
+		QueueDisconnectedCleanup(SignalObj, ConnectionObj)
+	else
+		ConnectionObj[4] = nil
+		ConnectionObj[5] = nil
+	end
+
 end
 
 local function AddConnection<T...>(ConnectionObj: Connection<T...>): ()
@@ -240,9 +293,18 @@ local function DisconnectExisting<T...>(SignalObj: Signal<T...>): ()
 	end
 
 	while CurrConnection do
+		local Previous = CurrConnection[4]
+
 		CurrConnection[1] = false
 		CurrConnection[6] = nil
-		CurrConnection = CurrConnection[4]
+		if SignalObj[3] then
+			QueueDisconnectedCleanup(SignalObj, CurrConnection)
+		else
+			CurrConnection[4] = nil
+			CurrConnection[5] = nil
+		end
+		
+		CurrConnection = Previous
 	end
 
 	SignalObj[1] = nil
@@ -256,38 +318,14 @@ local function ProcessMutations<T...>(SignalObj: Signal<T...>): ()
 	local Size = #Queue
 	if Size == 0 then return end
 
-	-- Disconnect All Check
-	local HasDisconnectAll = false
 	local Index = 1
-	while Index <= Size do
-		if Queue[Index] == 3 then
-			HasDisconnectAll = true
-			break
-		end
-		Index += 2
-	end
-
-	-- Invalidating Connections
-	if HasDisconnectAll then
-		Index = 1
-		while Index <= Size do
-			if Queue[Index] == 1 then
-				local ConnectionObj: Connection<T...> = Queue[Index + 1]
-				ConnectionObj[1] = false
-				ConnectionObj[6] = nil
-			end
-			Index += 2
-		end
-	end
-
-	Index = 1
 	while Index <= Size do
 		local Kind = Queue[Index]
 		local ConnectionObj: Connection<T...> = Queue[Index + 1]
 
 		if Kind == 1 then
-
 			ConnectionObj[6] = nil
+
 			if ConnectionObj[1] then
 				AddConnection(ConnectionObj)
 			end
@@ -297,14 +335,11 @@ local function ProcessMutations<T...>(SignalObj: Signal<T...>): ()
 			if ConnectionObj[6] == 1 then
 				ConnectionObj[6] = nil
 				ConnectionObj[1] = false
-			elseif ConnectionObj[6] == 2 then
-				ConnectionObj[6] = nil
-				DisconnectConnection(ConnectionObj)
 			elseif ConnectionObj[1] then
 				DisconnectConnection(ConnectionObj)
 			end
 
-		else
+		elseif Kind == 3 then
 			DisconnectExisting(SignalObj)
 		end
 
@@ -336,6 +371,7 @@ local function ResumeReentrant<T...>(SignalObj: Signal<T...>): ()
 		-- coroutine.resume Could be used here 
 		task.spawn(ReentrantThread)
 	else
+		CleanupDisconnectedConnections(SignalObj)
 		SignalObj[3] = nil
 	end
 end
@@ -399,40 +435,15 @@ function Connection:Disconnect<T...>(): ()
 		
 		self[6] = 2
 		QueueMutation(self, 2, SignalObj)
-	end
-
-	DisconnectConnection(self)
-end
-
---[=[
-Disconnects a connection from a Signal immediately. 
-This can cause issues if not used carefully
-
-@within Connection
-@tag To be used Carefully
-```lua 
-local Connection = Signal:Connect(function(Args) end)
-Connection:DisconnectImmediate()
-```
-]=]
-function Connection:DisconnectImmediate<T...>(): ()
-	if not self[1] then return end
-	local SignalObj: Signal<T...> = self[2]
-
-	local PendingStatus: number? = self[6]
-
-	if SignalObj[3] then
-		if PendingStatus == 1 then
-			self[1] = false
-			self[6] = nil
-			return
-		end
+		return
 	end
 
 	DisconnectConnection(self)
 end
 
 -- Signal Class
+
+local Signals: {[string]: Signal<...any>} = {}
 
 --[=[
 Creates a new Signal object
@@ -442,8 +453,28 @@ Creates a new Signal object
 local Signal = NewSignal.new()
 ```
 ]=]
-function Signal.new<T...>(): Signal<T...>
+local function New<T...>(): Signal<T...>
 	return setmetatable({}, Signal) :: Signal<T...>
+end
+
+--[=[
+Gets an existing Signal object with the given Id, or creates a new one if it doesn't exist.
+
+@return Signal
+```lua
+local Signal = NewSignal.new()
+```
+]=]
+local function Get<T...>(Id: string): Signal<T...>
+	local Existing = Signals[Id]
+	if Existing then
+		return Existing
+	end
+
+	local Created = New()
+	Signals[Id] = Created
+
+	return Created
 end
 
 --[=[
@@ -478,8 +509,11 @@ Signal:Fire("This message will not get printed", 10)
 ```
 ]=]
 function Signal:Once<T...>(Callback: (T...) -> ()): Connection<T...>
+	local Called = false
 	local ConnectionObj: Connection<T...>
 	ConnectionObj = CreateConnection(self, function(...)
+		if Called then return end
+		Called = true
 		DisconnectConnection(ConnectionObj)
 		Callback(...)
 	end)
@@ -515,9 +549,12 @@ function Signal:Wait<T...>(): T...
 
 	local ConnectionObj: Connection<T...>
 	ConnectionObj = CreateConnection(self, function(...)
+		if Fired then return end
+
+		Fired = true
 		DisconnectConnection(ConnectionObj)
 		YieldedThreads[WaitingThread] = nil
-		Fired = true
+
 		PackedArgs = table.pack(...)
 		ArgCount = (PackedArgs or ({} :: {n: number, [number]: any})).n or 0
 
@@ -531,34 +568,6 @@ function Signal:Wait<T...>(): T...
 	end
 
 	return coroutine.yield()
-end
-
---[=[
-Fires a Signal object with the arguments passed.
-
-@param ... any
-```lua
-Signal:Connect(function(Text)
-	print(Text) --> "Something..."
-end)
-
-Signal:FireSync("Something...")
-```
-]=]
-function Signal:FireSync<T...>(...: T...): ()
-
-	StartFiring(self)
-
-	local CurrentConnection: Connection<T...> = self[1]
-
-	while CurrentConnection do
-		if CurrentConnection[1] then
-			CurrentConnection[3](...)
-		end
-		CurrentConnection = CurrentConnection[5]
-	end
-
-	EndFiring(self)
 end
 
 --[=[
@@ -577,14 +586,15 @@ function Signal:FireAsync<T...>(...: T...): ()
 
 	StartFiring(self)
 
-	local CurrentConnection: Connection<T...> = self[1]
+	local CurrentConnection: Connection<T...>? = self[1]
 
 	while CurrentConnection do
+		local NextConnection = CurrentConnection[5]
 		if CurrentConnection[1] then
 			local RunnerThread = GetThread()
 			task.spawn(RunnerThread, RunnerThread, CurrentConnection[3], ...)
 		end
-		CurrentConnection = CurrentConnection[5]
+		CurrentConnection = NextConnection
 	end
 
 	EndFiring(self)
@@ -607,20 +617,21 @@ function Signal:FireDeferred<T...>(...: T...): ()
 
 	StartFiring(self)
 
-	local CurrentConnection: Connection<T...> = self[1]
+	local CurrentConnection: Connection<T...>? = self[1]
 
 	while CurrentConnection do
+		local NextConnection = CurrentConnection[5]
 		if CurrentConnection[1] then
 			task.defer(CurrentConnection[3], ...)
 		end
-		CurrentConnection = CurrentConnection[5]
+		CurrentConnection = NextConnection
 	end
 
 	EndFiring(self)
 end
 
 --[=[
-Fires a Signal object with the arguments passed using a `pcall`.
+Fires a Signal object asynchronously with the arguments passed using a `xpcall`.
 
 @param ... any
 ```lua
@@ -635,14 +646,15 @@ function Signal:FireSafe<T...>(...: T...): ()
 
 	StartFiring(self)
 
-	local CurrentConnection: Connection<T...> = self[1]
+	local CurrentConnection: Connection<T...>? = self[1]
 
 	while CurrentConnection do
+		local NextConnection = CurrentConnection[5]
 		if CurrentConnection[1] then
 			local RunnerThread = GetThread()
 			task.spawn(RunnerThread, RunnerThread, ProtectedInvoke, CurrentConnection[3], ...)
 		end
-		CurrentConnection = CurrentConnection[5]
+		CurrentConnection = NextConnection
 	end
 
 	EndFiring(self)
@@ -660,69 +672,9 @@ Signal:DisconnectAll()
 function Signal:DisconnectAll<T...>(): ()
 
 	if self[3] then
-		QueueMutation(nil, 3, self)
+		QueueMutation(0, 3, self)
 	else
 		DisconnectExisting(self)
-
-		if self[3] then
-			local MutationQueue: {any}? = self[4]
-			if MutationQueue then
-				local QueueSize = #MutationQueue
-				local Index = 1
-				while Index <= QueueSize do
-					if MutationQueue[Index] == 1 then
-						local PendingConnection: Connection<T...> = MutationQueue[Index + 1]
-						PendingConnection[1] = false
-						PendingConnection[6] = nil
-					end
-					Index += 2
-				end
-			end
-		end
-	end
-
-	local YieldedThreads: {[thread]: boolean}? = self[8]
-	if not YieldedThreads then return end
-
-	for Thread in YieldedThreads do
-		if coroutine.status(Thread) == "suspended" then
-			warn(debug.traceback(Thread, "Signal Disconnected. Yielded thread cancelled", 2))
-			task.cancel(Thread)
-		end
-	end
-
-	table.clear(YieldedThreads)
-end
-
---[=[
-Disconnects all current Connections from the Signal immediately.
-This can cause issues if not used carefully
-
-@tag To be used Carefully
-```lua
-Signal:Connect(function(Args) end)
-
-Signal:DisconnectAllImmediate()
-```
-]=]
-function Signal:DisconnectAllImmediate<T...>(): ()
-
-	DisconnectExisting(self)
-	
-	if self[3] then
-		local MutationQueue: {any}? = self[4]
-		if MutationQueue then
-			local QueueSize = #MutationQueue
-			local Index = 1
-			while Index <= QueueSize do
-				if MutationQueue[Index] == 1 then
-					local PendingConnection: Connection<T...> = MutationQueue[Index + 1]
-					PendingConnection[1] = false
-					PendingConnection[6] = nil
-				end
-				Index += 2
-			end
-		end
 	end
 
 	local YieldedThreads: {[thread]: boolean}? = self[8]
@@ -748,22 +700,60 @@ Signal:Destroy() -- Destroys the signal and disconnects all connections
 ```
 ]=]
 function Signal:Destroy<T...>()
-	self:DisconnectAllImmediate()
-
 	local MutationQueue: {any}? = self[4]
 	if MutationQueue then
+		local Size = #MutationQueue
+		local Index = 1
+
+		while Index <= Size do
+			local Kind = MutationQueue[Index]
+
+			if Kind == 1 or Kind == 2 then
+				local ConnectionObj = MutationQueue[Index + 1] :: Connection<T...>
+
+				ConnectionObj[1] = false
+				ConnectionObj[4] = nil
+				ConnectionObj[5] = nil
+				ConnectionObj[6] = nil
+			end
+
+			Index += 2
+		end
+
 		table.clear(MutationQueue)
 	end
 
+	DisconnectExisting(self)
+
 	local Reentrants: {thread}? = self[5]
 	if Reentrants then
+		for _, Thread in Reentrants do
+			if coroutine.status(Thread) == "suspended" then
+				task.cancel(Thread)
+			end
+		end
+
 		table.clear(Reentrants)
 	end
 
-	self[6] = 1
-	self[7] = 0
-	self[8] = nil
+	local YieldedThreads: {[thread]: boolean}? = self[8]
+	if YieldedThreads then
+		for Thread in YieldedThreads do
+			if coroutine.status(Thread) == "suspended" then
+				warn(debug.traceback(Thread, "Signal Destroyed. Yielded thread cancelled", 2))
+				task.cancel(Thread)
+			end
+		end
+
+		table.clear(YieldedThreads)
+	end
+
+	CleanupDisconnectedConnections(self)
+
+	table.clear(self)
+	setmetatable(self, nil)
 end
+
 
 
 --[=[
@@ -783,5 +773,6 @@ Signal:Fire("Something...") -- Same behaviour as `FireAsync` by default
 Signal.Fire = Signal[DefaultFireMethod]
 
 return table.freeze({
-	new = Signal.new,
+	new = New,
+	get = Get,
 })
