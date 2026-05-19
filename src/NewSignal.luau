@@ -448,6 +448,7 @@ local Signals: {[string]: Signal<...any>} = {}
 --[=[
 Creates a new Signal object
 
+@within Signal
 @return Signal
 ```lua
 local Signal = NewSignal.new()
@@ -460,6 +461,7 @@ end
 --[=[
 Gets an existing Signal object with the given Id, or creates a new one if it doesn't exist.
 
+@within Signal
 @return Signal
 ```lua
 local Signal = NewSignal.new()

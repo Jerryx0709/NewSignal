@@ -14,7 +14,7 @@ NewSignal is a lightweight alternative to Roblox's `BindableEvent` with superior
 - **Zero Dependencies** — Standalone library in pure luau with no external requirements
 - **Security** — Handles all possible edge cases while still being as performant as possible
 - **Familiar API** — Similar API to other Signal Modules and tries to simulate Roblox's `BindableEvent` API with additional features
-- **Two Disconnect Modes** — Extra features for Advanced Users
+- **Global Registry** — Ease of use across scripts
 
 ## Documentation
 
