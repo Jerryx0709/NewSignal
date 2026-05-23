@@ -17,7 +17,7 @@ This project is still work in progress and may still contain some bugs.
 
 ]]
 
--- Version: 3.0.1
+-- Version: 3.1.0
 
 --!strict
 --!optimize 2
@@ -68,6 +68,7 @@ export type Signal<T... = ()> = {
 	[7]: number? -- Reentrant Tail
 	[8]: {[thread]: boolean}? -- Waiting Threads
 	[9]: {Connection<T...>}? -- Connection Cleanup Queue
+	[10]: string? -- Registry Id
 
 	]]
 }
@@ -123,7 +124,7 @@ Connection.__index = Connection
 local CachedThread: thread? = nil
 local ThreadPool = {} :: {thread}
 
-local function CallThread(Thread: thread, Callback: (...any) -> (), ...: any): ()
+const function CallThread(Thread: thread, Callback: (...any) -> (), ...: any): ()
 	Callback(...)
 
 	if CachedThread then
@@ -133,13 +134,13 @@ local function CallThread(Thread: thread, Callback: (...any) -> (), ...: any): (
 	end
 end
 
-local function YieldThread(): ()
+const function YieldThread(): ()
 	while true do
 		CallThread(coroutine.yield())
 	end
 end
 
-local function GetThread(): thread
+const function GetThread(): thread
 	if CachedThread then
 		local RunnerThread = CachedThread
 		CachedThread = nil
@@ -164,7 +165,7 @@ end
 
 -- Private Functions
 
-local function QueueMutation<T...>(ConnectionObj: Connection<T...>? | number, Kind: number, SignalObj: Signal<T...>): () -- number in ConnectionObj to allow DisconnectAll
+const function QueueMutation<T...>(ConnectionObj: Connection<T...>? | number, Kind: number, SignalObj: Signal<T...>): () -- number in ConnectionObj to allow DisconnectAll
 	local Queue : {any} = SignalObj[4]
 
 	if not Queue then
@@ -177,7 +178,7 @@ local function QueueMutation<T...>(ConnectionObj: Connection<T...>? | number, Ki
 	Queue[Tail + 2] = ConnectionObj
 end
 
-local function QueueDisconnectedCleanup<T...>(SignalObj: Signal<T...>, ConnectionObj: Connection<T...>): ()
+const function QueueDisconnectedCleanup<T...>(SignalObj: Signal<T...>, ConnectionObj: Connection<T...>): ()
 	local Queue: {Connection<T...>}? = SignalObj[9]
 
 	if not Queue then
@@ -189,11 +190,13 @@ local function QueueDisconnectedCleanup<T...>(SignalObj: Signal<T...>, Connectio
 	CleanupQueue[#CleanupQueue + 1] = ConnectionObj
 end
 
-local function CleanupDisconnectedConnections<T...>(SignalObj: Signal<T...>): ()
+const function CleanupDisconnectedConnections<T...>(SignalObj: Signal<T...>): ()
 	local Queue: {Connection<T...>}? = SignalObj[9]
 	if not Queue then return end
 
 	for _, ConnectionObj in Queue do
+		ConnectionObj[2] = nil
+		ConnectionObj[3] = nil
 		ConnectionObj[4] = nil
 		ConnectionObj[5] = nil
 	end
@@ -202,7 +205,7 @@ local function CleanupDisconnectedConnections<T...>(SignalObj: Signal<T...>): ()
 end
 
 
-local function DisconnectConnection<T...>(ConnectionObj: Connection<T...>): ()
+const function DisconnectConnection<T...>(ConnectionObj: Connection<T...>): ()
 	if not ConnectionObj[1] then return end
 
 	ConnectionObj[1] = false
@@ -228,13 +231,15 @@ local function DisconnectConnection<T...>(ConnectionObj: Connection<T...>): ()
 	if SignalObj[3] then
 		QueueDisconnectedCleanup(SignalObj, ConnectionObj)
 	else
+		ConnectionObj[2] = nil
+		ConnectionObj[3] = nil
 		ConnectionObj[4] = nil
 		ConnectionObj[5] = nil
 	end
 
 end
 
-local function AddConnection<T...>(ConnectionObj: Connection<T...>): ()
+const function AddConnection<T...>(ConnectionObj: Connection<T...>): ()
 	local SignalObj: Signal<T...> = ConnectionObj[2]
 
 	local Tail: Connection<T...>? = SignalObj[2]
@@ -251,7 +256,7 @@ local function AddConnection<T...>(ConnectionObj: Connection<T...>): ()
 	SignalObj[2] = ConnectionObj
 end
 
-local function CreateConnection<T...>(SignalObj: Signal<T...>, Callback: (T...) -> ()): Connection<T...>
+const function CreateConnection<T...>(SignalObj: Signal<T...>, Callback: (T...) -> ()): Connection<T...>
 	local NewConnection: Connection<T...> = setmetatable({
 		[1] = true, -- Connected
 		[2] = SignalObj, -- Signal Parent
@@ -271,7 +276,7 @@ local function CreateConnection<T...>(SignalObj: Signal<T...>, Callback: (T...) 
 	return NewConnection
 end
 
-local function AddReentrantFire<T...>(SignalObj: Signal<T...>): ()
+const function AddReentrantFire<T...>(SignalObj: Signal<T...>): ()
 	local Reentrants = SignalObj[5]
 	if not Reentrants then 
 		Reentrants = {}
@@ -286,7 +291,7 @@ local function AddReentrantFire<T...>(SignalObj: Signal<T...>): ()
 	coroutine.yield()
 end
 
-local function DisconnectExisting<T...>(SignalObj: Signal<T...>): ()
+const function DisconnectExisting<T...>(SignalObj: Signal<T...>): ()
 	local CurrConnection: Connection<T...>? = SignalObj[2]
 	if not CurrConnection then
 		return
@@ -300,6 +305,8 @@ local function DisconnectExisting<T...>(SignalObj: Signal<T...>): ()
 		if SignalObj[3] then
 			QueueDisconnectedCleanup(SignalObj, CurrConnection)
 		else
+			CurrConnection[2] = nil
+			CurrConnection[3] = nil
 			CurrConnection[4] = nil
 			CurrConnection[5] = nil
 		end
@@ -311,7 +318,7 @@ local function DisconnectExisting<T...>(SignalObj: Signal<T...>): ()
 	SignalObj[2] = nil
 end
 
-local function ProcessMutations<T...>(SignalObj: Signal<T...>): ()
+const function ProcessMutations<T...>(SignalObj: Signal<T...>): ()
 	local Queue = SignalObj[4]
 	if not Queue then return end
 
@@ -333,8 +340,10 @@ local function ProcessMutations<T...>(SignalObj: Signal<T...>): ()
 		elseif Kind == 2 then
 
 			if ConnectionObj[6] == 1 then
-				ConnectionObj[6] = nil
 				ConnectionObj[1] = false
+				ConnectionObj[2] = nil
+				ConnectionObj[3] = nil
+				ConnectionObj[6] = nil
 			elseif ConnectionObj[1] then
 				DisconnectConnection(ConnectionObj)
 			end
@@ -349,7 +358,7 @@ local function ProcessMutations<T...>(SignalObj: Signal<T...>): ()
 	table.clear(Queue)
 end
 
-local function ResumeReentrant<T...>(SignalObj: Signal<T...>): ()
+const function ResumeReentrant<T...>(SignalObj: Signal<T...>): ()
 	local Head: number = SignalObj[6] or 1
 	local Tail: number = SignalObj[7] or 0
 
@@ -376,10 +385,10 @@ local function ResumeReentrant<T...>(SignalObj: Signal<T...>): ()
 	end
 end
 
-local function ProtectedInvoke(Callback: (...any) -> (), ...: any): ()
+const function ProtectedInvoke(Callback: (...any) -> (), ...: any): ()
 	local ErrorMessage: string? = nil
 
-	local function TracebackHandler(Error: any): string
+	const function TracebackHandler(Error: any): string
 		ErrorMessage = debug.traceback(tostring(Error), 2)
 		return ErrorMessage
 	end
@@ -390,7 +399,7 @@ local function ProtectedInvoke(Callback: (...any) -> (), ...: any): ()
 	end
 end
 
-local function StartFiring<T...>(SignalObj: Signal<T...>): ()
+const function StartFiring<T...>(SignalObj: Signal<T...>): ()
 	if SignalObj[3] then 
 		AddReentrantFire(SignalObj)
 	else
@@ -398,7 +407,7 @@ local function StartFiring<T...>(SignalObj: Signal<T...>): ()
 	end
 end
 
-local function EndFiring<T...>(SignalObj: Signal<T...>): ()
+const function EndFiring<T...>(SignalObj: Signal<T...>): ()
 	ProcessMutations(SignalObj)
 	ResumeReentrant(SignalObj)
 end
@@ -427,6 +436,8 @@ function Connection:Disconnect<T...>(): ()
 	if SignalObj[3] then
 		if PendingStatus == 1 then
 			self[1] = false
+			self[2] = nil
+			self[3] = nil
 			self[6] = nil
 			return
 		end
@@ -454,7 +465,7 @@ Creates a new Signal object
 local Signal = NewSignal.new()
 ```
 ]=]
-local function New<T...>(): Signal<T...>
+const function New<T...>(): Signal<T...>
 	return setmetatable({}, Signal) :: Signal<T...>
 end
 
@@ -467,13 +478,14 @@ Gets an existing Signal object with the given Id, or creates a new one if it doe
 local Signal = NewSignal.new()
 ```
 ]=]
-local function Get<T...>(Id: string): Signal<T...>
+const function Get<T...>(Id: string): Signal<T...>
 	local Existing = Signals[Id]
 	if Existing then
 		return Existing
 	end
 
 	local Created = New()
+	Created[10] = Id
 	Signals[Id] = Created
 
 	return Created
@@ -702,6 +714,11 @@ Signal:Destroy() -- Destroys the signal and disconnects all connections
 ```
 ]=]
 function Signal:Destroy<T...>()
+	local Id = self[10]
+	if Id and Signals[Id] == self then
+		Signals[Id] = nil
+	end
+
 	local MutationQueue: {any}? = self[4]
 	if MutationQueue then
 		local Size = #MutationQueue
