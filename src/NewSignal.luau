@@ -475,7 +475,7 @@ Gets an existing Signal object with the given Id, or creates a new one if it doe
 @within Signal
 @return Signal
 ```lua
-local Signal = NewSignal.new()
+local Signal = NewSignal.get("MySignal")
 ```
 ]=]
 const function Get<T...>(Id: string): Signal<T...>
