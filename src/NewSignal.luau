@@ -459,6 +459,7 @@ local Signals: {[string]: Signal<...any>} = {}
 --[=[
 Creates a new Signal object
 
+@function new
 @within Signal
 @return Signal
 ```lua
@@ -472,6 +473,7 @@ end
 --[=[
 Gets an existing Signal object with the given Id, or creates a new one if it doesn't exist.
 
+@function get
 @within Signal
 @return Signal
 ```lua

@@ -10,7 +10,7 @@ enabled = true
 includeReadme = false
 
 [[home.features]]
-title = "Order"
+title = "Consistency"
 description = "NewSignal is designed to be stable at all times and keep the results ordered and consistent while being as performant as possible. This allows it to be always predictable."
 
 [[home.features]]
